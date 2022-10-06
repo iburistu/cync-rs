@@ -153,14 +153,14 @@ async fn main() -> Result<()> {
                             .await
                             .expect("TLS error: acceptor not accepting TCP stream!");
 
-                        let (tx, mut rx) = mpsc::channel::<(Message, oneshot::Sender<u8>)>(10);
+                        let (tx, mut rx) = mpsc::channel::<(Message, oneshot::Sender<usize>)>(10);
 
                         let mut bc_rx = listener_bc_tx.subscribe();
                         let bc_tx = tx.clone();
 
                         let (mut rd, mut wr) = tokio::io::split(stream);
 
-                        let server_peer_addr = peer_addr.clone();
+                        let server_peer_addr = peer_addr;
 
                         info!("New connection: {}", peer_addr);
 
@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
                                 match rd.read(&mut buf).await {
                                     Ok(0) => return,
                                     Ok(l) => {
-                                        let (resp_tx, resp_rx) = oneshot::channel();
+                                        let (resp_tx, resp_rx) = oneshot::channel::<usize>();
                                         match &buf[..l] {
                                             // Client info
                                             // Send server ack
@@ -184,9 +184,18 @@ async fn main() -> Result<()> {
                                                         0x28, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
                                                     ]),
                                                 };
-                                                tx.send((msg, resp_tx)).await.unwrap();
-                                                let res: u8 = resp_rx.await.unwrap();
-                                                trace!("{}", res);
+                                                if let Err(e) = tx.send((msg, resp_tx)).await {
+                                                    warn!("{}", e);
+                                                }
+                                                if let Ok(res) = resp_rx.await {
+                                                    if res != 7 {
+                                                        warn!(
+                                                            "Wrote {} bytes...expected to write 7!",
+                                                            res,
+                                                        );
+                                                    }
+                                                    trace!("{}", res);
+                                                }
                                             }
                                             // Client connection request
                                             // Send server connection response
@@ -204,9 +213,18 @@ async fn main() -> Result<()> {
                                                         0xfe, 0x0c,
                                                     ]),
                                                 };
-                                                tx.send((msg, resp_tx)).await.unwrap();
-                                                let res = resp_rx.await.unwrap();
-                                                trace!("{}", res);
+                                                if let Err(e) = tx.send((msg, resp_tx)).await {
+                                                    warn!("{}", e);
+                                                }
+                                                if let Ok(res) = resp_rx.await {
+                                                    if res != 16 {
+                                                        warn!(
+                                                            "Wrote {} bytes...expected to write 16!",
+                                                            res
+                                                        );
+                                                    }
+                                                    trace!("{}", res);
+                                                }
                                             }
                                             // Client iter request
                                             // Send iter back
@@ -220,16 +238,25 @@ async fn main() -> Result<()> {
                                                         0x00,
                                                     ]),
                                                 };
-                                                tx.send((msg, resp_tx)).await.unwrap();
-                                                let res = resp_rx.await.unwrap();
-                                                trace!("{}", res);
+                                                if let Err(e) = tx.send((msg, resp_tx)).await {
+                                                    warn!("{}", e);
+                                                }
+                                                if let Ok(res) = resp_rx.await {
+                                                    if res != 8 {
+                                                        warn!(
+                                                            "Wrote {} bytes...expected to write 8!",
+                                                            res
+                                                        );
+                                                    }
+                                                    trace!("{}", res);
+                                                }
                                             }
                                             // Init status
                                             [0x43, 0x00, 0x00, 0x00, ..] => {
                                                 trace!("{} sent {:x?}", peer_addr, &buf[..l]);
                                                 if buf[5] != 0x1e {
                                                     let raw_state: &[u8] = &buf[15..22];
-                                                    match &raw_state[..] {
+                                                    match raw_state {
                                                         [0x01, ..] => {}
                                                         [0x02, ..] => {
                                                             let state: u8 = raw_state[1];
@@ -250,9 +277,18 @@ async fn main() -> Result<()> {
                                                         0x00,
                                                     ]),
                                                 };
-                                                tx.send((msg, resp_tx)).await.unwrap();
-                                                let res = resp_rx.await.unwrap();
-                                                trace!("{}", res);
+                                                if let Err(e) = tx.send((msg, resp_tx)).await {
+                                                    warn!("{}", e);
+                                                }
+                                                if let Ok(res) = resp_rx.await {
+                                                    if res != 8 {
+                                                        warn!(
+                                                            "Wrote {} bytes...expected to write 8!",
+                                                            res
+                                                        );
+                                                    }
+                                                    trace!("{}", res);
+                                                }
                                             }
                                             // Client heartbeat
                                             // Send server heartbeat
@@ -265,9 +301,18 @@ async fn main() -> Result<()> {
                                                         0xd8, 0x00, 0x00, 0x00, 0x00,
                                                     ]),
                                                 };
-                                                tx.send((msg, resp_tx)).await.unwrap();
-                                                let res = resp_rx.await.unwrap();
-                                                trace!("{}", res);
+                                                if let Err(e) = tx.send((msg, resp_tx)).await {
+                                                    warn!("{}", e);
+                                                }
+                                                if let Ok(res) = resp_rx.await {
+                                                    if res != 5 {
+                                                        warn!(
+                                                            "Wrote {} bytes...expected to write 5!",
+                                                            res
+                                                        );
+                                                    }
+                                                    trace!("{}", res);
+                                                }
                                             }
                                             // Client status on
                                             [0x7b, 0x00, 0x00, 0x00, 0x07, 0x01, ..] => {
@@ -296,44 +341,90 @@ async fn main() -> Result<()> {
                                 match command {
                                     Command::State(s) => {
                                         trace!("{}", s);
-                                        wr.write(&[
-                                            0x73, 0x00, 0x00, 0x00, 0x1f, s as u8, 0x00, 0x00,
-                                            0x00, 0x00, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x00, 0x00,
-                                            0xf8, 0xd0, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                            0x00, 0x00, 0xd0, 0x00, 0x00, s as u8, 0x00, 0x00,
-                                            0x00, 0x00,
-                                        ])
-                                        .await
-                                        .unwrap();
-                                        resp.send(s as u8).unwrap();
+                                        match wr
+                                            .write(&[
+                                                0x73, 0x00, 0x00, 0x00, 0x1f, s as u8, 0x00, 0x00,
+                                                0x00, 0x00, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x00,
+                                                0x00, 0xf8, 0xd0, 0x0d, 0x00, 0x00, 0x00, 0x00,
+                                                0x00, 0x00, 0x00, 0x00, 0xd0, 0x00, 0x00, s as u8,
+                                                0x00, 0x00, 0x00, 0x00,
+                                            ])
+                                            .await
+                                        {
+                                            Ok(size) => {
+                                                if size != 36 {
+                                                    warn!("State write may have failed...sent {} bytes, expected to send 36!", size);
+                                                }
+                                                if resp.send(size).is_err() {
+                                                    warn!(
+                                                        "Error sending response for state command!"
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => panic!("{}", e),
+                                        };
                                     }
                                     Command::Brightness(b) => {
                                         trace!("{}", b);
-                                        wr.write(&[
-                                            0x73, 0x00, 0x00, 0x00, 0x1d, 0x02, b, 0x00, 0x00,
-                                            0x00, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x00, 0x00, 0xf8,
-                                            0xd2, 0x0b, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-                                            0x00, 0xd2, 0x00, 0x00, b, 0x00, 0x00,
-                                        ])
-                                        .await
-                                        .unwrap();
-                                        resp.send(b).unwrap();
+                                        match wr
+                                            .write(&[
+                                                0x73, 0x00, 0x00, 0x00, 0x1d, 0x02, b, 0x00, 0x00,
+                                                0x00, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x00, 0x00,
+                                                0xf8, 0xd2, 0x0b, 0x00, 0x00, 0x01, 0x00, 0x00,
+                                                0x00, 0x00, 0x00, 0xd2, 0x00, 0x00, b, 0x00, 0x00,
+                                            ])
+                                            .await
+                                        {
+                                            Ok(size) => {
+                                                if size != 34 {
+                                                    warn!("Brightness write may have failed...sent {} bytes, expected to send 34!", size);
+                                                }
+                                                if resp.send(size).is_err() {
+                                                    warn!("Error sending response for brightness command!");
+                                                }
+                                            }
+                                            Err(e) => panic!("{}", e),
+                                        }
                                     }
                                     Command::Temperature(t) => {
                                         trace!("{}", t);
-                                        wr.write(&[
-                                            0x73, 0x00, 0x00, 0x00, 0x1e, 0x03, t, 0x00, 0x00,
-                                            0x00, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x00, 0x00, 0xf8,
-                                            0xe2, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                            0x00, 0xe2, 0x00, 0x00, 0x05, t, 0x00, 0x00,
-                                        ])
-                                        .await
-                                        .unwrap();
-                                        resp.send(t).unwrap();
+                                        match wr
+                                            .write(&[
+                                                0x73, 0x00, 0x00, 0x00, 0x1e, 0x03, t, 0x00, 0x00,
+                                                0x00, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x00, 0x00,
+                                                0xf8, 0xe2, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                                0x00, 0x00, 0x00, 0xe2, 0x00, 0x00, 0x05, t, 0x00,
+                                                0x00,
+                                            ])
+                                            .await
+                                        {
+                                            Ok(size) => {
+                                                if size != 35 {
+                                                    warn!("Temperature write may have failed...sent {} bytes, expected to send 35!", size);
+                                                }
+                                                if resp.send(size).is_err() {
+                                                    warn!(
+                                                        "Error sending response for temperature command!"
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => panic!("{}", e),
+                                        }
                                     }
                                     Command::Raw(r) => {
-                                        wr.write(&r).await.unwrap();
-                                        resp.send(r.len() as u8).unwrap();
+                                        match wr.write(&r).await {
+                                            Ok(size) => {
+                                                if size != r.len() {
+                                                    warn!("Raw message write may have failed...sent {} bytes, expected to send {}!", size, r.len());
+                                                }
+                                                if resp.send(size).is_err() {
+                                                    warn!(
+                                                        "Error sending response for raw command!"
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => panic!("{}", e),
+                                        };
                                     }
                                 }
                             }
@@ -345,9 +436,13 @@ async fn main() -> Result<()> {
                                     Ok(msg) => {
                                         if msg.target == server_peer_addr.ip() {
                                             let (resp_tx, resp_rx) = oneshot::channel();
-                                            bc_tx.send((msg, resp_tx)).await.unwrap();
-                                            let res = resp_rx.await.unwrap();
-                                            trace!("{}", res)
+                                            match bc_tx.send((msg, resp_tx)).await {
+                                                Ok(_) => {}
+                                                Err(e) => warn!("{}", e),
+                                            };
+                                            if let Ok(res) = resp_rx.await {
+                                                trace!("{}", res);
+                                            }
                                         }
                                     }
                                     Err(err) => {
@@ -364,10 +459,7 @@ async fn main() -> Result<()> {
                         );
                     });
                 }
-                Err(e) => {
-                    warn!("{}", e);
-                    panic!();
-                }
+                Err(e) => panic!("{}", e),
             }
         }
     };
