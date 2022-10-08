@@ -12,6 +12,10 @@ use warp::Filter;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
+    #[clap(short, long, default_value = "certs/identity.p12")]
+    certificate: String,
+    #[clap(short, long, default_value_t = 8080)]
+    port: u16,
     #[clap(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 }
@@ -41,8 +45,8 @@ fn setup_logging(verbosity: u8) -> std::io::Result<()> {
     let mut base_config = fern::Dispatch::new();
 
     base_config = match verbosity {
-        0 => base_config.level(log::LevelFilter::Warn),
-        1 => base_config.level(log::LevelFilter::Info),
+        0 => base_config.level(log::LevelFilter::Info),
+        1 => base_config.level(log::LevelFilter::Warn),
         2 => base_config.level(log::LevelFilter::Debug),
         _ => base_config.level(log::LevelFilter::Trace),
     };
@@ -118,7 +122,7 @@ async fn main() -> Result<()> {
 
     // Create the TLS acceptor.
     debug!("Attempting to read certificate file...");
-    let der: &[u8] = &read("certs/identity.p12").unwrap();
+    let der: &[u8] = &read(cli.certificate).unwrap();
     let cert = Identity::from_pkcs12(der, "cync-rs").unwrap();
 
     let tls_acceptor_builder = match native_tls::TlsAcceptor::builder(cert).build() {
@@ -141,6 +145,8 @@ async fn main() -> Result<()> {
         let listener = TcpListener::bind("0.0.0.0:23779")
             .await
             .expect("Unable to bind to port 23779");
+
+        info!("Created Cync TCP listener on 0.0.0.0:23779");
 
         loop {
             match listener.accept().await {
@@ -257,13 +263,17 @@ async fn main() -> Result<()> {
                                                 if buf[5] != 0x1e {
                                                     let raw_state: &[u8] = &buf[15..22];
                                                     match raw_state {
-                                                        [0x01, ..] => {}
+                                                        [0x01, ..] => {
+                                                            let state: u8 = raw_state[1];
+
+                                                            info!("{} is a smart plug that is currently {}", peer_addr.ip(), if state == 1 { "on" } else { "off" });
+                                                        }
                                                         [0x02, ..] => {
                                                             let state: u8 = raw_state[1];
                                                             let brightness: u8 = raw_state[2];
                                                             let temperature: u8 = raw_state[3];
 
-                                                            info!("{} is a smart light that is currently {} and has a brightness of {} and color temperature of {}", peer_addr, state, brightness, temperature);
+                                                            info!("{} is a smart light that is currently {} and has a brightness of {} and color temperature of {}", peer_addr.ip(), if state == 1 { "on" } else { "off" }, brightness, temperature);
                                                         }
                                                         _ => {}
                                                     }
@@ -317,12 +327,12 @@ async fn main() -> Result<()> {
                                             // Client status on
                                             [0x7b, 0x00, 0x00, 0x00, 0x07, 0x01, ..] => {
                                                 trace!("{} sent {:x?}", peer_addr, &buf[..l]);
-                                                info!("{} is now ON", peer_addr);
+                                                info!("{} is now ON", peer_addr.ip());
                                             }
                                             // Client status off
                                             [0x7b, 0x00, 0x00, 0x00, 0x07, 0x00, ..] => {
                                                 trace!("{} sent {:x?}", peer_addr, &buf[..l]);
-                                                info!("{} is now OFF", peer_addr);
+                                                info!("{} is now OFF", peer_addr.ip());
                                             }
                                             _ => {
                                                 trace!("{} sent {:x?}", peer_addr, buf);
@@ -474,7 +484,7 @@ async fn main() -> Result<()> {
             .and(with_tx(server_bc_tx.clone()))
             .and_then(handle_cmd);
 
-        warp::serve(post).run(([0, 0, 0, 0], 8080)).await;
+        warp::serve(post).run(([0, 0, 0, 0], cli.port)).await;
     };
 
     let _ = tokio::join!(tls_listener_task, warp_server_task);
