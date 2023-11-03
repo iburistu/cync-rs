@@ -1,7 +1,9 @@
 #!/bin/bash
 set -e
 
-cd $1
+mkdir -p ../certs
+
+cd ../certs
 
 # prepare config file for root CA generation
 cat <<EOF >> root.cnf
@@ -23,7 +25,7 @@ echo "Generate root CA key"
 openssl genrsa -out $ROOT_CA_KEY 4096
 
 echo "Generate root CA certificate"
-openssl req -x509 -new -key $ROOT_CA_KEY -out $ROOT_CA -days 3650 -SHA256 -subj "/CN=cm-ge.xlink.cn" -config root.cnf -extensions v3_ca
+openssl req -x509 -new -key $ROOT_CA_KEY -out $ROOT_CA -days 3650 -SHA256 -subj "/CN=*.xlink.cn" -config root.cnf -extensions v3_ca
 openssl x509 -outform der -in $ROOT_CA -out $ROOT_CA_DER
 
 rm root.cnf
@@ -33,7 +35,7 @@ cat <<EOF >> server.cnf
 extendedKeyUsage=serverAuth
 subjectAltName = @alt_names
 [alt_names]
-DNS.1 = cm-ge.xlink.cn
+DNS.1 = *.xlink.cn
 EOF
 
 
@@ -47,7 +49,7 @@ echo "Generate server key"
 openssl genrsa -out $SERVER_KEY 4096
 
 echo "Generate server certificate"
-openssl req -out server.csr -key $SERVER_KEY -new -days 3650 -SHA256 -subj "/CN=cm-ge.xlink.cn"
+openssl req -out server.csr -key $SERVER_KEY -new -SHA256 -subj "/CN=*.xlink.cn"
 openssl x509 -req -days 365 -SHA256 -in server.csr -CA $ROOT_CA -CAkey $ROOT_CA_KEY -CAcreateserial -out $SERVER_CERT -extfile server.cnf
 openssl x509 -outform der -in $SERVER_CERT -out $SERVER_CERT_DER
 
